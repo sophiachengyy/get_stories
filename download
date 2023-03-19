@@ -1,0 +1,181 @@
+
+from bs4 import BeautifulSoup
+from lxml import etree
+import time
+
+author_name=''
+author_id=''
+page_numbers=1
+middle_wait=2
+weibo_id=''
+
+from selenium import webdriver
+
+driver = webdriver.Chrome()  # 创建一个Chrome浏览器实例
+
+def get_stories(author_name, url):
+    driver.get(url)  # 打开网页
+    time.sleep(5)
+    # 获取网页的HTML代码，并保存到文件中
+    html_content = driver.page_source
+
+    tree = etree.HTML(html_content)
+    elements = tree.xpath('//div[@class="innerquiz"]/div[1]/div[2]/h2/a')
+
+    pages=[]
+    i = 0
+    for element in elements:
+        print(element)
+        i = i + 1
+        story_name = element.text
+        url = element.attrib['href']
+        brief = tree.xpath(f'(//div[@class="descr"])[{i}]')
+        print(story_name, url, brief[0].text)
+        pages.append((author_name, story_name, url, brief[0].text))
+    return pages
+
+
+def download_stories(all_stories, author_name=None, author_id=None,weibo_id=None):
+    print('---------------------------------------------------------------------------------------')
+    print('---------------------------------------------------------------------------------------')
+
+    print(f'{author_name} {author_id}所有待下载故事列表：{all_stories}')
+    print('---------------------------------------------------------------------------------------')
+    print('---------------------------------------------------------------------------------------')
+
+    for (author_name, name, url,brief) in all_stories:
+        download_a_story(author_name,name,url,brief, author_id, weibo_id)
+
+def clean_file_name(filename:str):
+    import re
+    invalid_chars='[\\\/:*?"<>|]'
+    replace_char='-'
+    return re.sub(invalid_chars,replace_char,filename)
+
+def save_breif_to_file(file_name, author_name, url, name,brief, author_id=None,weibo_id=None):
+
+    with open(file_name, 'a+', encoding="utf-8") as txt_file:
+        txt_file.write(f'{name}\n')
+        txt_file.write(f'作者: {author_name}\n')
+        if author_id is not None:
+            txt_file.write(f'Q站ID: {author_id}\n')
+        if weibo_id is not None:
+            txt_file.write(f'微博ID: {weibo_id}\n')
+
+        txt_file.write(f'阅读链接：{url}\n')
+        txt_file.write(f'简介： {brief}\n')
+        txt_file.write(f'提醒： 产出不易。谢谢 {author_name} 给我们带来美好的故事。方便的话，请去原文给她们评论。或者到微博评论点赞，表示支持。\n')
+
+
+        txt_file.close()
+
+
+def download_a_story(author_name,name,url,brief="无", author_id=None,weibo_id=None):
+    print(f'开始下载{name} from {url}')
+    driver.get(url)
+    time.sleep(middle_wait)
+    html_content = driver.page_source
+    tree= etree.HTML(html_content)
+    result = tree.xpath('//select[@name="rid"]/option')
+
+
+    max_number = len(result)
+    pages=[]
+    for element in result:
+        pages.append(element.attrib['value'])
+
+    print(f'总页数:{max_number}')
+
+    print(f'待下载页码：{pages}')
+
+    file_name = f'{author_name}_{name}.txt'
+    file_name = clean_file_name(file_name)
+
+    import os
+    if os.path.isfile(file_name):
+        with open(file_name, 'w', encoding="utf-8") as txt_file:
+            txt_file.write('')
+            txt_file.close()
+
+    save_breif_to_file(file_name, author_name, url, name, brief,author_id,weibo_id)
+
+    chapter_i = 0
+    for page in pages:
+        chapter_i = chapter_i + 1
+        driver.get(f'{url}/{page}')
+        time.sleep(middle_wait)
+
+        html_content = driver.page_source
+
+        print(f'开始存储 {name} chapter {chapter_i} 到 {file_name}')
+        if max_number==1:
+            save_to_file(html_content, file_name, chapter_i, is_multi=False)
+        else:
+            save_to_file(html_content, file_name, chapter_i)
+        if chapter_i == max_number:
+            print(f'结束下载{author_name} {name} from {url}')
+
+def save_to_file(html_content, file_name, i, is_multi=True):
+    tree = etree.HTML(html_content)
+    title= tree.xpath('//*[@id="quizSubtitle"]')[0].text #tree.ID('quizSubtitle')
+
+    title=title.replace("&nbsp;",' ')
+    # etree.tostring(element, encoding='unicode')
+
+    main_content = tree.xpath('//*[@id="quizResArea"]')[0]#tree.ID('quizResArea')[0].text
+    # text = main_content.text
+    text = etree.tostring(main_content,encoding='unicode')
+
+    text= text.replace("<br>","<p>")
+    text = text.replace("</br>","</p>")
+    text = text.replace("<div>", "<p>")
+    text = text.replace("</div>", "<p>")
+    text = text.replace("&nbsp;",' ')
+    soup = BeautifulSoup(text)
+    content = soup.find_all('p')  # 提取小说正文
+    story=[]
+    for x in content:
+        story.append(x.text)
+
+    with open(file_name, 'a+', encoding="utf-8") as txt_file:
+        if is_multi:
+            txt_file.write(f'\n 第 {i} 章  {title} \n')
+        else:
+            txt_file.write(f'\n {title} \n')
+        # txt_file.write(title)
+        for line in story:
+            txt_file.write(line)
+            txt_file.write('\n')
+        txt_file.close()
+
+
+
+all_stories =[]
+for i in range(1, int(page_numbers)+1):
+    author_url = f'https://www.quotev.com/{author_id}/published?page={i}'
+    driver.get(author_url)
+    time.sleep(middle_wait)
+    print(f'{author_name} {author_id}获取到所有故事 from {author_url}')
+    stories= get_stories(author_name, author_url)
+    all_stories.extend(stories)
+
+
+print(f'{author_name} {author_id}所有待下载故事列表：{all_stories}')
+
+download_stories(all_stories, author_name, author_id, weibo_id)
+
+# # 使用BeautifulSoup库解析HTML代码
+# soup = BeautifulSoup(html_content, 'html.parser')
+#
+# # 提取网页中的所有链接
+# links = []
+# for link in soup.find_all('a'):
+#     href = link.get('href')
+#     if href is not None:
+#         links.append(href)
+#         print(href)
+#         print('\n')
+
+# 打印所有链接
+# print(links)
+driver.quit()  # 关闭浏览器
